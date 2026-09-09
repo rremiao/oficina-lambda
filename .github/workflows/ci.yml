@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+      - homolog
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oficina-lambda-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: us-east-1
+  NODE_VERSION: "22"
+  TERRAFORM_VERSION: "1.9.8"
+
+jobs:
+  application:
+    name: Lint, test and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build deployment package
+        run: npm run build
+
+      - name: Check package contents
+        run: |
+          set -euo pipefail
+
+          if [ ! -f function.zip ]; then
+            echo "::error::O build nao gerou function.zip."
+            exit 1
+          fi
+
+          unzip -l function.zip
+
+          for arquivo in token.cjs authorizer.cjs; do
+            if ! unzip -l function.zip | grep -q "${arquivo}"; then
+              echo "::error::O pacote nao contem ${arquivo}."
+              exit 1
+            fi
+          done
+
+      - name: Upload deployment package
+        uses: actions/upload-artifact@v4
+        with:
+          name: function-zip
+          path: function.zip
+          retention-days: 5
+
+  infrastructure:
+    name: Validate and plan Terraform
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: application
+
+    defaults:
+      run:
+        working-directory: infra
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download deployment package
+        uses: actions/download-artifact@v4
+        with:
+          name: function-zip
+          path: .
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+
+      - name: Validate configuration
+        run: |
+          set -euo pipefail
+          terraform init -backend=false -input=false
+          terraform validate
+
+      # As credenciais do Learner Lab expiram em poucas horas. Quando estiverem vencidas o plan é
+      # pulado, e o Pull Request ainda assim recebe lint, testes, formatação e validate.
+      - name: Check for AWS credentials
+        id: credenciais
+        env:
+          CHAVE: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          if [ -n "${CHAVE}" ] && [ -n "${BUCKET}" ]; then
+            echo "disponivel=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "disponivel=false" >> "$GITHUB_OUTPUT"
+            echo "### Plan pulado" >> "$GITHUB_STEP_SUMMARY"
+            echo "Sem credenciais AWS ou sem a variavel TF_STATE_BUCKET no repositorio." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Configure AWS credentials
+        if: steps.credenciais.outputs.disponivel == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Plan for homolog
+        if: steps.credenciais.outputs.disponivel == 'true'
+        env:
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_jwt_secret: ${{ secrets.SECURITY_JWT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=oficina-lambda/hml/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+          terraform plan -input=false -no-color \
+            -var-file=envs/hml.tfvars \
+            > plan.txt
+
+          {
+            echo "### Terraform plan (homolog)"
+            echo '```'
+            tail -c 60000 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

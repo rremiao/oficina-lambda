@@ -1,0 +1,11 @@
+node_modules/
+dist/
+function.zip
+*.log
+.env
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
