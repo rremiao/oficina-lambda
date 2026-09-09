@@ -35,7 +35,12 @@ locals {
   pacote = "${path.module}/../function.zip"
 
   # Rotas que o Gateway entrega ao backend sem exigir token. O contexto da API é /oficina/v1.
+  #
+  # `POST /oficina/v1/auth/login` fica aberta pelo mesmo motivo de `POST /auth/token`: é a troca de
+  # credencial por token do operador, e não há token para o authorizer validar antes dela. O
+  # cadastro de usuários (`/oficina/v1/usuarios`) continua sob o authorizer.
   rotas_abertas = {
+    "POST /oficina/v1/auth/login"         = "http://${var.backend_lb_dns}/oficina/v1/auth/login"
     "ANY /oficina/v1/public/{proxy+}"     = "http://${var.backend_lb_dns}/oficina/v1/public/{proxy}"
     "GET /oficina/v1/swagger-ui.html"     = "http://${var.backend_lb_dns}/oficina/v1/swagger-ui.html"
     "GET /oficina/v1/swagger-ui/{proxy+}" = "http://${var.backend_lb_dns}/oficina/v1/swagger-ui/{proxy}"
