@@ -1,0 +1,175 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - homolog
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Um apply por ambiente de cada vez: dois em paralelo no mesmo state se atrapalham.
+concurrency:
+  group: oficina-lambda-deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  NODE_VERSION: "22"
+  TERRAFORM_VERSION: "1.9.8"
+
+jobs:
+  deploy:
+    name: Build, apply and smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # homolog aplica em hml, main aplica em prd. Nada além disso muda entre os ambientes.
+      - name: Resolve target environment
+        id: ambiente
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+            echo "nome=prd" >> "$GITHUB_OUTPUT"
+          else
+            echo "nome=hml" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build deployment package
+        run: npm run build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate AWS identity
+        run: |
+          set -euo pipefail
+
+          if ! aws sts get-caller-identity; then
+            echo "::error::Credenciais AWS invalidas ou expiradas."
+            echo "::error::O Learner Lab renova as credenciais a cada sessao. Atualize os secrets AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY e AWS_SESSION_TOKEN."
+            exit 1
+          fi
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Check environment file
+        working-directory: infra
+        run: |
+          set -euo pipefail
+
+          ARQUIVO="envs/${{ steps.ambiente.outputs.nome }}.tfvars"
+
+          if grep -q "SUBSTITUIR" "${ARQUIVO}"; then
+            echo "::error::${ARQUIVO} ainda tem valor de exemplo."
+            echo "::error::Preencha backend_lb_dns com o DNS do LoadBalancer do Service da API no EKS."
+            exit 1
+          fi
+
+      - name: Apply Terraform
+        working-directory: infra
+        env:
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_jwt_secret: ${{ secrets.SECURITY_JWT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=oficina-lambda/${{ steps.ambiente.outputs.nome }}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+          terraform apply -auto-approve -input=false \
+            -var-file="envs/${{ steps.ambiente.outputs.nome }}.tfvars"
+
+      - name: Export API endpoint
+        id: saidas
+        working-directory: infra
+        run: |
+          set -euo pipefail
+
+          ENDPOINT=$(terraform output -raw api_endpoint)
+
+          echo "endpoint=${ENDPOINT}" >> "$GITHUB_OUTPUT"
+          echo "API publicada em ${ENDPOINT}" >> "$GITHUB_STEP_SUMMARY"
+
+      # O smoke test cobre o risco mais caro do projeto: segredo HS256 diferente entre este
+      # repositorio e a API. O token sairia normalmente e so a rota protegida acusaria.
+      - name: Smoke test
+        env:
+          ENDPOINT: ${{ steps.saidas.outputs.endpoint }}
+          CPF: ${{ vars.SMOKE_CPF }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CPF}" ]; then
+            echo "::warning::Variavel SMOKE_CPF nao configurada. Smoke test pulado."
+            exit 0
+          fi
+
+          RESPOSTA=$(curl -s -w "\n%{http_code}" -X POST "${ENDPOINT}auth/token" \
+            -H "content-type: application/json" \
+            -d "{\"cpf\":\"${CPF}\"}")
+
+          CORPO=$(echo "${RESPOSTA}" | head -n -1)
+          STATUS=$(echo "${RESPOSTA}" | tail -n 1)
+
+          if [ "${STATUS}" != "200" ]; then
+            echo "::error::A emissao do token respondeu ${STATUS}."
+            echo "${CORPO}"
+            exit 1
+          fi
+
+          TOKEN=$(echo "${CORPO}" | jq -r .token)
+          CLIENTE_ID=$(echo "${CORPO}" | jq -r .cliente.id)
+
+          if [ -z "${TOKEN}" ] || [ "${TOKEN}" = "null" ]; then
+            echo "::error::A resposta 200 nao trouxe token."
+            exit 1
+          fi
+
+          if [ -z "${CLIENTE_ID}" ] || [ "${CLIENTE_ID}" = "null" ]; then
+            echo "::error::A resposta 200 nao trouxe cliente.id."
+            exit 1
+          fi
+
+          # Rota coerente com um token de cliente: as ordens de servico do proprio cliente.
+          PROTEGIDA=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            "${ENDPOINT}oficina/v1/ordens/cliente/${CLIENTE_ID}")
+
+          if [ "${PROTEGIDA}" != "200" ]; then
+            echo "::error::A rota protegida respondeu ${PROTEGIDA} com um token recem emitido."
+            echo "::error::A causa mais provavel e o segredo HS256 divergente entre este repositorio e a API, ou o DNS do LoadBalancer desatualizado no tfvars."
+            exit 1
+          fi
+
+          echo "Emissao do token e consumo da rota protegida funcionando." >> "$GITHUB_STEP_SUMMARY"

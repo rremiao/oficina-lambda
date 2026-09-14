@@ -1,0 +1,30 @@
+{
+  "name": "oficina-lambda",
+  "version": "1.0.0",
+  "description": "Function serverless de autenticacao por CPF da oficina",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "it:up": "docker compose -f docker-compose.integration.yml up -d --wait",
+    "it:down": "docker compose -f docker-compose.integration.yml down -v",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.163",
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.23.1",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "jose": "^6.2.12",
+    "pg": "^8.23.0"
+  }
+}

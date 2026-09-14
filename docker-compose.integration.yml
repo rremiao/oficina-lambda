@@ -1,0 +1,25 @@
+# Postgres efêmero para os testes de integração da função `auth-token`.
+#
+# Sobe só o banco (sem a aplicação Spring), com a tabela `cliente` e alguns registros de exemplo
+# carregados por tests/integration/schema.sql. Uso:
+#
+#   npm run it:up          # sobe e espera ficar saudável
+#   npm run test:integration
+#   npm run it:down         # derruba e apaga o volume
+services:
+  postgres:
+    image: postgres:15
+    container_name: oficina_lambda_it_postgres
+    environment:
+      POSTGRES_DB: oficina
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./tests/integration/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d oficina"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
