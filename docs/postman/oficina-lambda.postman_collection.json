@@ -1,0 +1,522 @@
+{
+  "info": {
+    "name": "oficina-lambda — autenticação por CPF",
+    "description": "Verificação ponta a ponta do fluxo de autenticação por CPF do Tech Challenge Fase 3.\n\nAntes de rodar, preencha a variável `gatewayUrl` com o output `api_endpoint` do Terraform (sem barra no final) e confirme que os CPFs abaixo foram semeados no RDS conforme o runbook.\n\nA ordem importa: a primeira requisição guarda `token` e `clienteId` nas variáveis da collection, usados pelas seguintes. Rode com o Collection Runner para validar tudo de uma vez.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "gatewayUrl",
+      "value": "https://SUBSTITUIR.execute-api.us-east-1.amazonaws.com",
+      "type": "string"
+    },
+    {
+      "key": "cpfAtivo",
+      "value": "529.982.247-25",
+      "type": "string"
+    },
+    {
+      "key": "cpfInativo",
+      "value": "111.444.777-35",
+      "type": "string"
+    },
+    {
+      "key": "cpfSemCliente",
+      "value": "390.533.447-05",
+      "type": "string"
+    },
+    {
+      "key": "cpfInvalido",
+      "value": "111.111.111-11",
+      "type": "string"
+    },
+    {
+      "key": "emailOperador",
+      "value": "operador.e2e@oficina.com",
+      "type": "string"
+    },
+    {
+      "key": "senhaOperador",
+      "value": "Senha@123",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "clienteId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Emissão do token (POST /auth/token)",
+      "item": [
+        {
+          "name": "CPF válido e cliente ativo → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const corpo = pm.response.json();",
+                  "pm.test(\"devolve token, tipo Bearer e cliente\", function () {",
+                  "    pm.expect(corpo.token).to.be.a(\"string\").and.not.empty;",
+                  "    pm.expect(corpo.tipo).to.eql(\"Bearer\");",
+                  "    pm.expect(corpo.cliente.id).to.be.a(\"number\");",
+                  "});",
+                  "pm.test(\"o token tem as claims do contrato\", function () {",
+                  "    const payload = JSON.parse(atob(corpo.token.split(\".\")[1]));",
+                  "    pm.expect(payload.tipo).to.eql(\"CLIENTE\");",
+                  "    pm.expect(payload.clienteId).to.be.a(\"number\");",
+                  "    pm.expect(payload.sub).to.match(/^\\d{11}$/);",
+                  "});",
+                  "pm.collectionVariables.set(\"token\", corpo.token);",
+                  "pm.collectionVariables.set(\"clienteId\", corpo.cliente.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/auth/token",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "auth",
+                "token"
+              ]
+            },
+            "description": "Caminho feliz. Guarda token e clienteId para as requisições seguintes.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"cpf\": \"{{cpfAtivo}}\"}"
+            }
+          }
+        },
+        {
+          "name": "CPF com dígito verificador inválido → 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 400\", function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/auth/token",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "auth",
+                "token"
+              ]
+            },
+            "description": "Sequência de dígitos repetidos: passa no tamanho, falha na validação.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"cpf\": \"{{cpfInvalido}}\"}"
+            }
+          }
+        },
+        {
+          "name": "CPF válido sem cliente cadastrado → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 404\", function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/auth/token",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "auth",
+                "token"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"cpf\": \"{{cpfSemCliente}}\"}"
+            }
+          }
+        },
+        {
+          "name": "Cliente inativo → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 403\", function () {",
+                  "    pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/auth/token",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "auth",
+                "token"
+              ]
+            },
+            "description": "Cliente gravado no banco SEM máscara — prova que a normalização funciona nos dois formatos.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"cpf\": \"{{cpfInativo}}\"}"
+            }
+          }
+        },
+        {
+          "name": "Corpo sem CPF → 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 400\", function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/auth/token",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "auth",
+                "token"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Rota protegida pelo Lambda Authorizer",
+      "item": [
+        {
+          "name": "Com token válido → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/oficina/v1/ordens/cliente/{{clienteId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "oficina",
+                "v1",
+                "ordens",
+                "cliente",
+                "{{clienteId}}"
+              ]
+            },
+            "description": "Prova a ponta a ponta: token emitido pela Lambda é aceito pelo authorizer e revalidado pela API."
+          }
+        },
+        {
+          "name": "Sem cabeçalho Authorization → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 401\", function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/oficina/v1/ordens/cliente/{{clienteId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "oficina",
+                "v1",
+                "ordens",
+                "cliente",
+                "{{clienteId}}"
+              ]
+            },
+            "description": "O próprio API Gateway barra, sem invocar o authorizer (efeito do identity_sources)."
+          }
+        },
+        {
+          "name": "Token adulterado → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 403\", function () {",
+                  "    pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}xx"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/oficina/v1/ordens/cliente/{{clienteId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "oficina",
+                "v1",
+                "ordens",
+                "cliente",
+                "{{clienteId}}"
+              ]
+            },
+            "description": "Aqui quem nega é o authorizer, devolvendo isAuthorized: false."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Rotas abertas (sem authorizer)",
+      "item": [
+        {
+          "name": "Login de operador → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/oficina/v1/auth/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "oficina",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Rota aberta em local.rotas_abertas: é a troca de credencial por token, não há token para validar antes.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\": \"{{emailOperador}}\", \"senha\": \"{{senhaOperador}}\"}"
+            }
+          }
+        },
+        {
+          "name": "OpenAPI sem token → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/oficina/v1/api-docs",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "oficina",
+                "v1",
+                "api-docs"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Correlação de requisições",
+      "item": [
+        {
+          "name": "Requisição com x-correlation-id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"a resposta ecoa o correlation id\", function () {",
+                  "    pm.expect(pm.response.headers.has(\"x-correlation-id\")).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-correlation-id",
+                "value": "postman-{{$timestamp}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/oficina/v1/ordens/cliente/{{clienteId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "oficina",
+                "v1",
+                "ordens",
+                "cliente",
+                "{{clienteId}}"
+              ]
+            },
+            "description": "Depois de rodar, procure o mesmo valor em três lugares:\n  aws logs filter-log-events --log-group-name /aws/apigateway/oficina-hml\n  aws logs filter-log-events --log-group-name /aws/lambda/oficina-hml-authorizer\n  kubectl logs -n oficina -l app.kubernetes.io/name=oficina-api\nConfirme também que nenhum CPF aparece em claro nesses logs."
+          }
+        }
+      ]
+    }
+  ]
+}
