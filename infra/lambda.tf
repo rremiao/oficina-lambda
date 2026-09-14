@@ -22,11 +22,15 @@ resource "aws_security_group" "lambda" {
 resource "aws_lambda_function" "auth_token" {
   function_name = "${local.prefixo}-auth-token"
   role          = data.aws_iam_role.lab.arn
-  handler       = "token.handler"
+  # Com New Relic habilitado, o wrapper da layer intercepta a invocação e repassa pro handler real
+  # via NEW_RELIC_LAMBDA_HANDLER — é assim que a extension mede duração/erros sem exigir nenhuma
+  # mudança no código de src/handlers/token.ts.
+  handler       = local.newrelic_habilitado ? "newrelic-lambda-wrapper.handler" : "token.handler"
   runtime       = "nodejs22.x"
   architectures = ["x86_64"]
   timeout       = 10
   memory_size   = 512
+  layers        = local.newrelic_layers
 
   filename         = local.pacote
   source_code_hash = filebase64sha256(local.pacote)
@@ -40,7 +44,19 @@ resource "aws_lambda_function" "auth_token" {
   }
 
   environment {
-    variables = {
+    # AWS não aceita valor null num map(string) de env vars, por isso os dois ramos do condicional
+    # abaixo têm que ser mapas completos (nunca uma chave individual condicionada a null).
+    variables = local.newrelic_habilitado ? merge(local.newrelic_env_comum, {
+      DB_HOST                  = data.aws_db_instance.postgres.address
+      DB_PORT                  = tostring(data.aws_db_instance.postgres.port)
+      DB_NAME                  = var.db_name
+      DB_USER                  = var.db_username
+      DB_PASSWORD              = var.db_password
+      DB_SSL                   = "true"
+      SECURITY_JWT_SECRET      = var.jwt_secret
+      SECURITY_JWT_EXPIRATION  = tostring(var.jwt_expiration_ms)
+      NEW_RELIC_LAMBDA_HANDLER = "token.handler"
+      }) : {
       DB_HOST                 = data.aws_db_instance.postgres.address
       DB_PORT                 = tostring(data.aws_db_instance.postgres.port)
       DB_NAME                 = var.db_name
@@ -60,17 +76,21 @@ resource "aws_lambda_function" "auth_token" {
 resource "aws_lambda_function" "authorizer" {
   function_name = "${local.prefixo}-authorizer"
   role          = data.aws_iam_role.lab.arn
-  handler       = "authorizer.handler"
+  handler       = local.newrelic_habilitado ? "newrelic-lambda-wrapper.handler" : "authorizer.handler"
   runtime       = "nodejs22.x"
   architectures = ["x86_64"]
   timeout       = 5
   memory_size   = 256
+  layers        = local.newrelic_layers
 
   filename         = local.pacote
   source_code_hash = filebase64sha256(local.pacote)
 
   environment {
-    variables = {
+    variables = local.newrelic_habilitado ? merge(local.newrelic_env_comum, {
+      SECURITY_JWT_SECRET      = var.jwt_secret
+      NEW_RELIC_LAMBDA_HANDLER = "authorizer.handler"
+      }) : {
       SECURITY_JWT_SECRET = var.jwt_secret
     }
   }

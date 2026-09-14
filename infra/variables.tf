@@ -107,3 +107,33 @@ variable "limite_p95_authorizer_ms" {
   type        = number
   default     = 1000
 }
+
+# --- New Relic (observabilidade) ---
+#
+# Modelo de agent via Lambda Layer, não a AWS Integration nativa (que exigiria uma IAM role nova,
+# bloqueada no Learner Lab). Ver ADR-0002 no repositório oficina-kubernetes para a justificativa
+# completa da escolha da ferramenta.
+
+variable "newrelic_account_id" {
+  description = "ID da conta New Relic (Account settings > numérico no canto superior direito)."
+  type        = string
+  default     = ""
+}
+
+variable "newrelic_license_key" {
+  description = "License key da conta New Relic. Chega por TF_VAR_newrelic_license_key, nunca em texto no repo."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "newrelic_layer_arn" {
+  description = <<EOT
+ARN da Lambda Layer do New Relic para Node.js, específica da região e da versão do runtime.
+Descobrir a versão mais recente com:
+  npx newrelic-lambda-cli layers list --region us-east-1 --runtime nodejs22.x
+Formato: arn:aws:lambda:us-east-1:451483290750:layer:NewRelicNodeJS22X:<versao>
+EOT
+  type        = string
+  default     = ""
+}

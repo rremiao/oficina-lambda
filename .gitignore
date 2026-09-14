@@ -9,3 +9,4 @@ function.zip
 *.tfstate
 *.tfstate.*
 crash.log
+*.tfplan

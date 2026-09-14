@@ -34,6 +34,18 @@ locals {
 
   pacote = "${path.module}/../function.zip"
 
+  # Instrumentação New Relic é opcional: enquanto newrelic_layer_arn estiver vazio (conta ainda não
+  # provisionada), as functions sobem sem a layer e sem o wrapper, exatamente como hoje.
+  newrelic_habilitado = var.newrelic_layer_arn != ""
+
+  newrelic_layers = local.newrelic_habilitado ? [var.newrelic_layer_arn] : []
+
+  newrelic_env_comum = local.newrelic_habilitado ? {
+    NEW_RELIC_ACCOUNT_ID               = var.newrelic_account_id
+    NEW_RELIC_LICENSE_KEY              = var.newrelic_license_key
+    NEW_RELIC_LAMBDA_EXTENSION_ENABLED = "true"
+  } : {}
+
   # Rotas que o Gateway entrega ao backend sem exigir token. O contexto da API é /oficina/v1.
   #
   # `POST /oficina/v1/auth/login` fica aberta pelo mesmo motivo de `POST /auth/token`: é a troca de

@@ -126,18 +126,41 @@ chamada a uma rota protegida com o token recém-emitido.
 
 ## Deploy
 
+### Bootstrap do bucket de state (uma vez só, por conta AWS)
+
+O backend `s3` é parcial de propósito (`backend "s3" {}` em `versions.tf`) — o bucket não é
+provisionado pelo próprio Terraform deste repositório (problema de ovo-e-galinha: o state do bucket
+teria que morar em algum lugar). Criar manualmente antes do primeiro `init`:
+
+```bash
+BUCKET="oficina-lambda-tfstate-$(aws sts get-caller-identity --query Account --output text)"
+aws s3api create-bucket --bucket "$BUCKET" --region us-east-1
+aws s3api put-bucket-versioning --bucket "$BUCKET" --versioning-configuration Status=Enabled
+aws s3api put-public-access-block --bucket "$BUCKET" \
+  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+```
+
+No AWS Academy Learner Lab, a conta é reciclada periodicamente — se o bucket sumir, este passo
+precisa ser refeito antes de qualquer `terraform init`.
+
 O deploy é sempre feito pela pipeline (`.github/workflows/deploy.yml`), nunca manualmente: um push
 em `homolog` aplica o ambiente `hml`, um push em `main` aplica o ambiente `prd`. Antes do primeiro
 deploy em um ambiente nunca aplicado:
 
-1. Preencher `infra/envs/hml.tfvars` (ou `prd.tfvars`) com o DNS real do LoadBalancer da API —
-   o valor de exemplo (`SUBSTITUIR-...`) faz a pipeline falhar de propósito, para não aplicar um
-   `$default` route apontando para lugar nenhum.
+1. Preencher `infra/envs/hml.tfvars` (ou `prd.tfvars`) com:
+   - O DNS real do LoadBalancer da API (`backend_lb_dns`) — o valor de exemplo (`SUBSTITUIR-...`)
+     faz a pipeline falhar de propósito, para não aplicar um `$default` route apontando para lugar
+     nenhum. **Atenção**: a API Gateway v2 valida o formato do host na criação da integração — um
+     placeholder com TLD inválido (ex.: `algo.invalid`) é **rejeitado** com
+     `BadRequestException: Invalid HTTP endpoint specified for URI`, não passa silenciosamente.
+   - `db_username`, que precisa ser **idêntico** ao usuário master configurado no
+     `terraform.tfvars` do repositório `oficina-database` (o `variables.tf` deste repo usa `postgres`
+     como default, mas o `oficina-database` usa `oficina_user` — conferir os dois antes do apply).
 2. Configurar no repositório GitHub:
    - Secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` (do Learner Lab),
      `DB_PASSWORD` e `SECURITY_JWT_SECRET` (idêntico ao da API).
-   - Variáveis: `TF_STATE_BUCKET` (bucket do state) e, opcionalmente, `SMOKE_CPF` (um CPF de
-     cliente ativo de teste, para o smoke test pós-deploy).
+   - Variáveis: `TF_STATE_BUCKET` (bucket criado no bootstrap acima) e, opcionalmente, `SMOKE_CPF`
+     (um CPF de cliente ativo de teste, para o smoke test pós-deploy).
 3. Proteger as branches `main` e `homolog` exigindo Pull Request e os checks de `ci.yml`.
 
 Para rodar `plan`/`apply` manualmente (depuração local):
@@ -152,6 +175,19 @@ terraform init \
 TF_VAR_db_password=... TF_VAR_jwt_secret=... \
   terraform plan -var-file=envs/hml.tfvars
 ```
+
+### Destruir o ambiente ao final do Lab
+
+```bash
+cd infra
+terraform destroy -var-file=envs/hml.tfvars
+```
+
+Esse é o **primeiro** repositório a derrubar quando for encerrar a sessão do Lab (a Lambda depende
+do RDS e do LoadBalancer da app; destruir os outros dois primeiro não quebra nada aqui, mas não há
+motivo pra arriscar). Ordem completa entre os 4 repositórios, com o porquê de cada passo, no
+[runbook do ambiente completo](https://github.com/rremiao/oficina-kubernetes/blob/main/docs/runbook-ambiente-completo.md)
+(repositório `oficina-kubernetes`).
 
 ## Pipelines
 
@@ -173,6 +209,20 @@ TF_VAR_db_password=... TF_VAR_jwt_secret=... \
   segue do Gateway até o log da API no EKS (ver `CorrelationIdFilter` no repositório `oficina`).
 - Alarmes no CloudWatch (`infra/observability.tf`) para erro de execução, `p95` de duração,
   estrangulamento por concorrência reservada e 5xx no Gateway.
+- **New Relic** (opcional, desligado por padrão): `auth-token` e `authorizer` podem ser instrumentadas
+  via New Relic Lambda Layer, preservando o handler original através de `NEW_RELIC_LAMBDA_HANDLER`.
+  Para habilitar:
+
+  ```bash
+  # descobre o ARN da layer mais recente pra nodejs22.x na região us-east-1
+  npx newrelic-lambda-cli layers list --region us-east-1 --runtime nodejs22.x
+  ```
+
+  Preencha `newrelic_layer_arn` e `newrelic_account_id` no `.tfvars` do ambiente
+  (`infra/envs/hml.tfvars` ou `infra/envs/prd.tfvars`) e passe a license key via
+  `TF_VAR_newrelic_license_key` (nunca em arquivo versionado — mesmo padrão já usado para
+  `jwt_secret` e `db_password`). Ver [ADR-0007](docs/adr/0007-instrumentacao-new-relic-via-layer.md).
+
 ## Decisões arquiteturais
 
 ### RFCs — `docs/rfc/`
@@ -193,4 +243,6 @@ TF_VAR_db_password=... TF_VAR_jwt_secret=... \
 | [ADR-0003](docs/adr/0003-logs-estruturados-e-correlacao.md) | Organização dos logs e da correlação de requisições |
 | [ADR-0004](docs/adr/0004-escalabilidade-concorrencia-reservada.md) | Escalabilidade: concorrência reservada e conexão reaproveitada |
 | [ADR-0005](docs/adr/0005-segredos-em-variaveis-de-ambiente.md) | Segredos em variáveis de ambiente da Lambda, não no Secrets Manager |
+| [ADR-0006](docs/adr/0006-isolamento-de-rede.md) | Isolamento de rede: `auth-token` dentro da VPC, `authorizer` fora |
+| [ADR-0007](docs/adr/0007-instrumentacao-new-relic-via-layer.md) | Instrumentação das functions via New Relic Lambda Layer |
 | [ADR-0006](docs/adr/0006-isolamento-de-rede.md) | Isolamento de rede: `auth-token` na VPC, `authorizer` fora |
