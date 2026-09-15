@@ -1,0 +1,29 @@
+flowchart TD
+    A[Cliente abre app] --> B[Informa CPF]
+    B --> C[POST /auth/token]
+    C --> D[API Gateway]
+    D --> E[Lambda auth-token]
+    E --> F{CPF válido?}
+
+    F -- Não --> G[400 Bad Request]
+    F -- Sim --> H[Normaliza CPF]
+    H --> I[Valida dígitos verificadores]
+    I --> J{Cliente existe?}
+
+    J -- Não --> K[404 Not Found]
+    J -- Sim --> L{Cliente ativo?}
+    L -- Não --> M[403 Forbidden]
+    L -- Sim --> N[Gera JWT HS256]
+    N --> O[200 OK com token]
+
+    O --> P[Cliente usa token na requisição]
+    P --> Q[API Gateway]
+    Q --> R[Lambda Authorizer]
+    R --> S{Token válido?}
+
+    S -- Não --> T[401 / 403]
+    S -- Sim --> U[Requisição encaminhada]
+    U --> V[API protegida]
+    V --> W[Revalida assinatura e expiração]
+    W --> X[Autoriza acesso]
+    X --> Y[Resposta da rota protegida]
