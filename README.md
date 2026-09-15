@@ -124,6 +124,62 @@ ativo cadastrado com máscara, um inativo sem máscara). Os casos cobrem `200` +
 A collection Postman em [`docs/postman/`](docs/postman) cobre os quatro cenários acima, mais uma
 chamada a uma rota protegida com o token recém-emitido.
 
+### Exemplo — emitir o token (200)
+
+```bash
+curl -X POST https://<api-gateway-url>/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"cpf":"529.982.247-25"}'
+```
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiJ9...",
+  "tipo": "Bearer",
+  "expiraEm": "2026-01-10T14:32:05.000Z",
+  "cliente": { "id": 1, "nome": "Cliente E2E Ativo" }
+}
+```
+
+O CPF é aceito com ou sem máscara. Todas as respostas (sucesso ou erro) devolvem o header
+`x-correlation-id`.
+
+### Exemplo — erro de negócio (400 / 403 / 404)
+
+Os três códigos de erro de negócio compartilham o mesmo formato de corpo, variando `erro`,
+`mensagem` e o status HTTP:
+
+```json
+{
+  "erro": "CLIENTE_INATIVO",
+  "mensagem": "O cadastro deste cliente esta inativo.",
+  "correlationId": "a5608410-e57f-4d43-9bcf-ea0f26abd323"
+}
+```
+
+| `erro` | Status | Quando acontece |
+| --- | --- | --- |
+| `CPF_INVALIDO` | `400` | CPF ausente, com tamanho errado ou dígito verificador inválido |
+| `CLIENTE_NAO_ENCONTRADO` | `404` | CPF válido, mas nenhum cliente cadastrado com esse documento |
+| `CLIENTE_INATIVO` | `403` | Cliente existe, mas está com `ativo = false` |
+
+### Exemplo — consumir uma rota protegida com o token emitido
+
+O token de cliente é aceito nas mesmas rotas da API principal (`oficina`), validado de forma
+independente pelo `authorizer` (na borda) e pelo filtro JWT da própria aplicação (dupla validação —
+ver [ADR-0001](docs/adr/0001-dupla-validacao-jwt.md)):
+
+```bash
+curl https://<api-gateway-url>/oficina/v1/ordens/cliente/1 \
+  -H "Authorization: Bearer <token-recebido-acima>"
+```
+
+Sem token, a resposta é a negação nativa do API Gateway:
+
+```json
+{ "message": "Unauthorized" }
+```
+
 ## Deploy
 
 ### Bootstrap do bucket de state (uma vez só, por conta AWS)
