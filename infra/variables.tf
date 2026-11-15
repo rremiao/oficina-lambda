@@ -72,6 +72,18 @@ variable "backend_lb_dns" {
   type        = string
 }
 
+variable "execution_lb_dns" {
+  description = <<-EOT
+    DNS do LoadBalancer do execution-service no cluster EKS.
+
+    Vazio desliga a rota /execution/v1, para o Gateway continuar subindo enquanto
+    o serviço ainda não foi publicado. Com valor, a rota passa a existir e é
+    protegida pelo mesmo Lambda Authorizer das demais.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "reserved_concurrency" {
   description = "Execuções simultâneas da função de token, limitadas para não esgotar o db.t3.micro."
   type        = number
