@@ -82,6 +82,39 @@ resource "aws_apigatewayv2_route" "backend" {
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }
 
+# --- Execution Service ---------------------------------------------------------------------------
+#
+# O $default manda tudo que sobra para o backend do monólito. Esta rota é mais específica, então o
+# API Gateway a escolhe antes do $default para qualquer caminho sob /execution/v1.
+#
+# count = 0 enquanto execution_lb_dns estiver vazio: assim o Gateway sobe normalmente antes de o
+# serviço existir, e passa a rotear assim que o DNS do LoadBalancer for preenchido no tfvars.
+
+resource "aws_apigatewayv2_integration" "execution" {
+  count = var.execution_lb_dns == "" ? 0 : 1
+
+  api_id             = aws_apigatewayv2_api.oficina.id
+  integration_type   = "HTTP_PROXY"
+  integration_method = "ANY"
+  integration_uri    = "http://${var.execution_lb_dns}/execution/v1/{proxy}"
+
+  # Mesma corrente de correlação das outras rotas: o id resolvido pelo authorizer segue no cabeçalho
+  # até o serviço, e de lá para dentro do envelope das mensagens.
+  request_parameters = {
+    "overwrite:header.x-correlation-id" = "$context.authorizer.correlationId"
+  }
+}
+
+resource "aws_apigatewayv2_route" "execution" {
+  count = var.execution_lb_dns == "" ? 0 : 1
+
+  api_id             = aws_apigatewayv2_api.oficina.id
+  route_key          = "ANY /execution/v1/{proxy+}"
+  target             = "integrations/${aws_apigatewayv2_integration.execution[0].id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
 # --- Stage --------------------------------------------------------------------------------------
 
 resource "aws_apigatewayv2_stage" "default" {
