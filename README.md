@@ -245,6 +245,25 @@ motivo pra arriscar). Ordem completa entre os 4 repositórios, com o porquê de 
 [runbook do ambiente completo](https://github.com/rremiao/oficina-kubernetes/blob/main/docs/runbook-ambiente-completo.md)
 (repositório `oficina-kubernetes`).
 
+## Rotas dos microsserviços (Fase 4)
+
+O `$default` continua mandando tudo para o OS Service (`backend_lb_dns`, contexto `/oficina/v1`). Os
+outros dois serviços têm rotas próprias, mais específicas, que só existem quando o DNS do
+LoadBalancer está preenchido no `infra/envs/<ambiente>.tfvars`:
+
+| Variável | Rota | Autorização |
+| --- | --- | --- |
+| `execution_lb_dns` | `ANY /execution/v1/{proxy+}` | Lambda Authorizer |
+| `billing_lb_dns` | `ANY /billing/v1/{proxy+}` | Lambda Authorizer |
+| `billing_lb_dns` | `POST /billing/v1/pagamentos/webhook/mercadopago` | Nenhuma: o Mercado Pago não manda token; o Billing confere a assinatura `x-signature` |
+| `billing_lb_dns` | `GET /billing/v1/swagger-ui*` e `/billing/v1/api-docs*` | Nenhuma, como o Swagger do OS Service |
+
+Os DNS saem de `kubectl get svc -n oficina` (`execution-service-lb` e `billing-service`). Com a
+variável vazia, a rota fica desligada e o Gateway sobe normalmente.
+
+Na Fase 4 a tabela `cliente` fica no banco do OS Service, então o `hml.tfvars` usa
+`db_name = "os_service"` (o banco `oficina` do monólito não existe mais no RDS).
+
 ## Pipelines
 
 - **`ci.yml`** (Pull Request para `main`/`homolog`) — instala dependências, roda `tsc --noEmit`,
