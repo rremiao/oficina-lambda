@@ -30,17 +30,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # homolog aplica em hml, main aplica em prd. Nada além disso muda entre os ambientes.
+      # O projeto tem um ambiente só no Learner Lab: hml, o mesmo do EKS, do RDS e do API Gateway que
+      # os microsserviços usam. main e homolog aplicam nele. O prd.tfvars fica como modelo para um
+      # ambiente de produção separado, que nunca foi provisionado.
       - name: Resolve target environment
         id: ambiente
-        run: |
-          set -euo pipefail
-
-          if [ "${GITHUB_REF_NAME}" = "main" ]; then
-            echo "nome=prd" >> "$GITHUB_OUTPUT"
-          else
-            echo "nome=hml" >> "$GITHUB_OUTPUT"
-          fi
+        run: echo "nome=hml" >> "$GITHUB_OUTPUT"
 
       - name: Set up Node
         uses: actions/setup-node@v4
