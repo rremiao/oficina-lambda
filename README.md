@@ -200,8 +200,9 @@ No AWS Academy Learner Lab, a conta é reciclada periodicamente — se o bucket 
 precisa ser refeito antes de qualquer `terraform init`.
 
 O deploy é sempre feito pela pipeline (`.github/workflows/deploy.yml`), nunca manualmente: um push
-em `homolog` aplica o ambiente `hml`, um push em `main` aplica o ambiente `prd`. Antes do primeiro
-deploy em um ambiente nunca aplicado:
+em `main` (ou `homolog`) aplica o ambiente `hml`, o único provisionado no Learner Lab, junto do EKS,
+do RDS e dos microsserviços. O `prd.tfvars` fica como modelo de um ambiente de produção separado.
+Antes do primeiro deploy em um ambiente nunca aplicado:
 
 1. Preencher `infra/envs/hml.tfvars` (ou `prd.tfvars`) com:
    - O DNS real do LoadBalancer da API (`backend_lb_dns`) — o valor de exemplo (`SUBSTITUIR-...`)
