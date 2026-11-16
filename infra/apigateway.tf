@@ -115,6 +115,72 @@ resource "aws_apigatewayv2_route" "execution" {
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }
 
+# --- Billing Service -----------------------------------------------------------------------------
+#
+# Mesmo padrão da rota do Execution: count = 0 enquanto billing_lb_dns estiver vazio. As rotas abertas
+# (webhook e Swagger) são mais específicas que /billing/v1/{proxy+}, então o Gateway as escolhe antes.
+
+locals {
+  billing_habilitado = var.billing_lb_dns != ""
+
+  # O Mercado Pago chama o webhook sem token: a autenticação dele é a assinatura HMAC (x-signature),
+  # que o próprio Billing confere. O Swagger fica aberto como o do OS Service.
+  rotas_abertas_billing = local.billing_habilitado ? {
+    "POST /billing/v1/pagamentos/webhook/mercadopago" = "http://${var.billing_lb_dns}/billing/v1/pagamentos/webhook/mercadopago"
+    "GET /billing/v1/swagger-ui.html"                 = "http://${var.billing_lb_dns}/billing/v1/swagger-ui.html"
+    "GET /billing/v1/swagger-ui/{proxy+}"             = "http://${var.billing_lb_dns}/billing/v1/swagger-ui/{proxy}"
+    "GET /billing/v1/api-docs"                        = "http://${var.billing_lb_dns}/billing/v1/api-docs"
+    "GET /billing/v1/api-docs/{proxy+}"               = "http://${var.billing_lb_dns}/billing/v1/api-docs/{proxy}"
+  } : {}
+}
+
+resource "aws_apigatewayv2_integration" "billing" {
+  count = local.billing_habilitado ? 1 : 0
+
+  api_id             = aws_apigatewayv2_api.oficina.id
+  integration_type   = "HTTP_PROXY"
+  integration_method = "ANY"
+  integration_uri    = "http://${var.billing_lb_dns}/billing/v1/{proxy}"
+
+  request_parameters = {
+    "overwrite:header.x-correlation-id" = "$context.authorizer.correlationId"
+  }
+}
+
+resource "aws_apigatewayv2_route" "billing" {
+  count = local.billing_habilitado ? 1 : 0
+
+  api_id             = aws_apigatewayv2_api.oficina.id
+  route_key          = "ANY /billing/v1/{proxy+}"
+  target             = "integrations/${aws_apigatewayv2_integration.billing[0].id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_integration" "billing_abertas" {
+  for_each = local.rotas_abertas_billing
+
+  api_id             = aws_apigatewayv2_api.oficina.id
+  integration_type   = "HTTP_PROXY"
+  integration_method = "ANY"
+  integration_uri    = each.value
+
+  # Sem authorizer não há correlationId resolvido: o requestId do Gateway faz esse papel, para o log
+  # do Billing continuar amarrado ao log de acesso do Gateway.
+  request_parameters = {
+    "overwrite:header.x-correlation-id" = "$context.requestId"
+  }
+}
+
+resource "aws_apigatewayv2_route" "billing_abertas" {
+  for_each = local.rotas_abertas_billing
+
+  api_id             = aws_apigatewayv2_api.oficina.id
+  route_key          = each.key
+  target             = "integrations/${aws_apigatewayv2_integration.billing_abertas[each.key].id}"
+  authorization_type = "NONE"
+}
+
 # --- Stage --------------------------------------------------------------------------------------
 
 resource "aws_apigatewayv2_stage" "default" {

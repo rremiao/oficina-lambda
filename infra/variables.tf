@@ -84,6 +84,18 @@ variable "execution_lb_dns" {
   default     = ""
 }
 
+variable "billing_lb_dns" {
+  description = <<-EOT
+    DNS do LoadBalancer do billing-service no cluster EKS.
+
+    Vazio desliga as rotas /billing/v1. Com valor, /billing/v1/** passa pelo Lambda
+    Authorizer, e o webhook do Mercado Pago e o Swagger ficam abertos (o webhook é
+    autenticado pela assinatura x-signature, conferida no próprio Billing).
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "reserved_concurrency" {
   description = "Execuções simultâneas da função de token, limitadas para não esgotar o db.t3.micro."
   type        = number
